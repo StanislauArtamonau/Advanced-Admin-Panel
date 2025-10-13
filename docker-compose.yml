@@ -1,0 +1,103 @@
+version: '3.1'
+
+services:
+  
+  # Database
+  database:
+    container_name: "adv-adm-pan-db"
+    image: mariadb:latest
+    restart: always
+    environment:
+      MARIADB_DATABASE: ${WORDPRESS_DB_NAME}
+      MARIADB_USER: ${WORDPRESS_DB_USER}
+      MARIADB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    env_file:
+      - .env
+    healthcheck:
+        test: ["CMD", "mariadb-admin" ,"ping", "-h", "localhost", "-uroot", "-p$DB_ROOT_PASSWORD"]
+        interval: 5s
+        timeout: 10s
+        retries: 10
+    volumes:
+      - ./docker/data/db:/docker-entrypoint-initdb.d
+  
+  # Database backup
+  database-backup:
+    container_name: "adv-adm-pan-db-backup"
+    image: mariadb:latest
+    depends_on:
+      - database
+    environment:
+      MARIADB_DATABASE: ${WORDPRESS_DB_NAME}
+      MARIADB_USER: ${WORDPRESS_DB_USER}
+      MARIADB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    env_file:
+      - .env
+    command: >
+      bash -c "
+        sleep 5
+        chmod 755 /opt/backup.sh
+        /opt/backup.sh
+      "
+    volumes:
+     - ./docker/data/db:/tmp/db
+     - ./docker/bin:/opt
+
+  
+  # PMA
+  phpmyadmin:
+    container_name: "adv-adm-pan-pma"
+    image: phpmyadmin
+    restart: always
+    ports:
+      - 81:80
+    environment:
+      UPLOAD_LIMIT: 100M
+      PMA_HOST: database
+      PMA_USER: root
+      PMA_PASSWORD: ${DB_ROOT_PASSWORD}
+
+  # WP
+  wordpress:
+    container_name: "adv-adm-pan-wp"
+    image: "wordpress:latest"
+    depends_on:
+      database:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - 80:80
+    healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:80/wp-admin/"]
+        interval: 5s
+        timeout: 10s
+        retries: 10
+    volumes:
+      - wordpress:/var/www/html
+      - ./logs:/var/www/html/wp-content/logs
+      - ./docker/bin:/var/www/html/install
+      - ./docker/data/wp/plugins:/var/www/html/wp-content/plugins
+      - ./docker/data/wp/uploads:/var/www/html/wp-content/uploads
+      - ./adv-adm-pan:/var/www/html/wp-content/themes/adv-adm-pan/
+
+  # WP cli
+  cli:
+    container_name: "adv-adm-pan-wp-cli"
+    image: wordpress:cli
+    user: "33:33"
+    depends_on:
+      wordpress:
+        condition: service_healthy
+    links:
+      - database
+    volumes_from:
+      - wordpress
+    env_file:
+      - .env
+    command: bash -c "/bin/sh /var/www/html/install/install.sh"
+
+volumes:
+  wordpress:
