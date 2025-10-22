@@ -1,25 +1,44 @@
 <?php
+// Конфигурация API
+define('BAZAAR_API_BASE_URL', 'http://localhost:3001/v1/api/marketplace/ads/admin/moderation'); // Замени на реальный URL
+define('BAZAAR_API_TIMEOUT', 30);
+
 // Добавляем страницу в админке
 add_action('admin_menu', function() {
     add_menu_page(
-        'Заявки барахолки',
-        'Заявки барахолки',
+        'Модерация барахолки',
+        '🛒 Модерация',
         'manage_options',
-        'bazaar-applications',
-        'render_bazaar_applications_page',
+        'bazaar-moderation',
+        'render_bazaar_moderation_page',
         'dashicons-cart',
         25
     );
 });
 
-function render_bazaar_applications_page() {
+function render_bazaar_moderation_page() {
+    wp_enqueue_script('bazaar-admin', get_template_directory_uri() . '/js/bazaar-admin.js', ['jquery'], '1.0', true);
+    wp_localize_script('bazaar-admin', 'bazaar_ajax', [
+        'ajax_url' => admin_url('admin-ajax.php'),
+        'nonce' => wp_create_nonce('bazaar_nonce'),
+        'api_base_url' => BAZAAR_API_BASE_URL
+    ]);
     ?>
     <div class="wrap">
-        <h1>🛒 Заявки барахолки</h1>
+        <h1>🛒 Модерация объявлений</h1>
         
-        <div class="notice notice-info">
-            <p>Заявки загружаются из API. Для обновления списка обновите страницу.</p>
-            <p><strong>Endpoint для отправки заявок:</strong> <code>POST <?php echo get_rest_url(); ?>bazaar/v1/application</code></p>
+        <div class="bazaar-header">
+            <div class="notice notice-info">
+                <p>Заявки загружаются с бэкенда. Для обновления списка обновите страницу.</p>
+                <p><strong>API Endpoint:</strong> <code>GET <?php echo BAZAAR_API_BASE_URL; ?>/ads/admin/moderation</code></p>
+            </div>
+            
+            <div class="bazaar-controls">
+                <button type="button" class="button button-secondary" id="refresh-applications">
+                    🔄 Обновить список
+                </button>
+                <span class="bazaar-stats" id="applications-stats"></span>
+            </div>
         </div>
 
         <div id="bazaar-applications-container">
@@ -28,6 +47,25 @@ function render_bazaar_applications_page() {
     </div>
     
     <style>
+    .bazaar-header {
+        margin-bottom: 20px;
+    }
+    
+    .bazaar-controls {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        margin: 15px 0;
+        padding: 15px;
+        background: #f6f7f7;
+        border-radius: 6px;
+    }
+    
+    .bazaar-stats {
+        color: #666;
+        font-size: 14px;
+    }
+    
     .bazaar-applications {
         display: grid;
         gap: 25px;
@@ -76,30 +114,30 @@ function render_bazaar_applications_page() {
     
     .application-meta {
         margin-top: 8px;
-        font-size: 12px;
+        font-size: 13px;
         color: #666;
     }
     
     .application-meta span {
         margin-right: 15px;
+        display: inline-block;
     }
     
-    .application-source {
-        background: #0073aa;
-        color: white;
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-size: 11px;
+    .seller-name {
+        background: #e7f3ff;
+        padding: 2px 8px;
+        border-radius: 4px;
+        color: #0073aa;
     }
     
-    .application-id {
+    .application-phone {
         font-family: monospace;
         background: #f1f1f1;
         padding: 2px 6px;
         border-radius: 3px;
     }
     
-    .application-date {
+    .application-condition {
         color: #666;
     }
     
@@ -159,8 +197,31 @@ function render_bazaar_applications_page() {
         font-size: 14px;
     }
     
+    .attributes-list {
+        margin-top: 10px;
+    }
+    
+    .attribute-item {
+        padding: 5px 0;
+        border-bottom: 1px solid #e1e1e1;
+    }
+    
+    .attribute-item:last-child {
+        border-bottom: none;
+    }
+    
     .status-pending {
         color: #ffb900;
+        font-weight: 500;
+    }
+    
+    .status-approved {
+        color: #46b450;
+        font-weight: 500;
+    }
+    
+    .status-rejected {
+        color: #dc3232;
         font-weight: 500;
     }
     
@@ -179,7 +240,11 @@ function render_bazaar_applications_page() {
         border-top: 1px solid #e1e1e1;
         display: flex;
         gap: 12px;
-        align-items: center;
+        align-items: flex-start;
+    }
+    
+    .approve-btn, .reject-btn {
+        transition: all 0.3s ease;
     }
     
     .approve-btn {
@@ -191,6 +256,7 @@ function render_bazaar_applications_page() {
     .approve-btn:hover:not(:disabled) {
         background: #3a9543;
         border-color: #3a9543;
+        transform: translateY(-1px);
     }
     
     .reject-btn {
@@ -202,6 +268,33 @@ function render_bazaar_applications_page() {
     .reject-btn:hover:not(:disabled) {
         background: #c12a2a;
         border-color: #c12a2a;
+        transform: translateY(-1px);
+    }
+    
+    .rejection-reason {
+        margin-top: 15px;
+        padding: 15px;
+        background: #f8f0f0;
+        border: 1px solid #e2b3b3;
+        border-radius: 6px;
+        display: none;
+        flex: 1;
+    }
+    
+    .rejection-reason textarea {
+        width: 100%;
+        height: 80px;
+        margin-top: 10px;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        resize: vertical;
+    }
+    
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
     }
     
     .no-applications {
@@ -217,109 +310,305 @@ function render_bazaar_applications_page() {
         color: #666;
         margin-bottom: 10px;
     }
+    
+    .application-processed {
+        opacity: 0.7;
+        background: #f9f9f9;
+    }
+    
+    .loading-spinner {
+        text-align: center;
+        padding: 40px;
+    }
+    
+    .error-notice {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 15px;
+        border-radius: 6px;
+        margin: 15px 0;
+    }
     </style>
+    
+    <script>
+    jQuery(document).ready(function($) {
+        // Обновление списка
+        $('#refresh-applications').on('click', function() {
+            loadApplications();
+        });
+        
+        // Одобрение заявки
+        $(document).on('click', '.approve-btn', function() {
+            var $card = $(this).closest('.application-card');
+            var applicationId = $card.data('application-id');
+            
+            if (confirm('Вы уверены, что хотите одобрить это объявление?')) {
+                processApplication(applicationId, 'approve');
+            }
+        });
+        
+        // Отклонение заявки
+        $(document).on('click', '.reject-btn', function() {
+            var $card = $(this).closest('.application-card');
+            var $reasonSection = $card.find('.rejection-reason');
+            $reasonSection.show();
+        });
+        
+        // Подтверждение отклонения
+        $(document).on('click', '.confirm-reject', function() {
+            var $card = $(this).closest('.application-card');
+            var applicationId = $card.data('application-id');
+            var reason = $card.find('.rejection-reason-text').val();
+            
+            if (!reason.trim()) {
+                alert('Пожалуйста, укажите причину отказа');
+                return;
+            }
+            
+            processApplication(applicationId, 'reject', reason);
+        });
+        
+        // Отмена отклонения
+        $(document).on('click', '.cancel-reject', function() {
+            $(this).closest('.rejection-reason').hide().find('textarea').val('');
+        });
+        
+        function processApplication(applicationId, action, reason = '') {
+            var $card = $('.application-card[data-application-id="' + applicationId + '"]');
+            var $buttons = $card.find('.approve-btn, .reject-btn');
+            
+            $buttons.prop('disabled', true).text('Обработка...');
+            
+            $.ajax({
+                url: bazaar_ajax.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'process_bazaar_application',
+                    application_id: applicationId,
+                    action_type: action,
+                    reason: reason,
+                    nonce: bazaar_ajax.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $card.addClass('application-processed');
+                        $card.find('.status-pending')
+                             .removeClass('status-pending')
+                             .addClass('status-' + (action === 'approve' ? 'approved' : 'rejected'))
+                             .text(action === 'approve' ? '✅ Одобрено' : '❌ Отклонено');
+                        
+                        $buttons.remove();
+                        $card.find('.rejection-reason').remove();
+                        
+                        var resultText = action === 'approve' ? 
+                            '✅ Объявление одобрено' : 
+                            '❌ Объявление отклонено';
+                        $card.find('.application-actions').html('<div class="notice notice-' + 
+                            (action === 'approve' ? 'success' : 'error') + '"><p>' + resultText + '</p></div>');
+                    } else {
+                        alert('Ошибка: ' + response.data);
+                        $buttons.prop('disabled', false).text(function() {
+                            return $(this).hasClass('approve-btn') ? '✅ Одобрить' : '❌ Отклонить';
+                        });
+                    }
+                },
+                error: function() {
+                    alert('Произошла ошибка при обработке заявки');
+                    $buttons.prop('disabled', false).text(function() {
+                        return $(this).hasClass('approve-btn') ? '✅ Одобрить' : '❌ Отклонить';
+                    });
+                }
+            });
+        }
+        
+        function loadApplications() {
+            $('#bazaar-applications-container').html('<div class="loading-spinner">🔄 Загрузка...</div>');
+            
+            $.ajax({
+                url: bazaar_ajax.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'load_bazaar_applications',
+                    nonce: bazaar_ajax.nonce
+                },
+                success: function(response) {
+                    $('#bazaar-applications-container').html(response.data);
+                    updateStats();
+                },
+                error: function() {
+                    $('#bazaar-applications-container').html('<div class="error-notice">Ошибка при загрузке заявок</div>');
+                }
+            });
+        }
+        
+        function updateStats() {
+            var count = $('.application-card').length;
+            var pending = $('.status-pending').length;
+            $('#applications-stats').text('Всего: ' + count + ', На модерации: ' + pending);
+        }
+        
+        // Initial stats
+        updateStats();
+    });
+    </script>
     <?php
 }
 
-// Регистрируем REST API endpoint для приема заявок
-add_action('rest_api_init', function() {
-    register_rest_route('bazaar/v1', '/application', [
-        'methods' => 'POST',
-        'callback' => 'handle_application_submission',
-        'permission_callback' => 'verify_application_origin'
-    ]);
-});
+// AJAX обработчик для загрузки заявок
+add_action('wp_ajax_load_bazaar_applications', 'load_bazaar_applications_ajax');
 
-function verify_application_origin() {
-    // Временно разрешаем все запросы для тестирования
-    return true;
+function load_bazaar_applications_ajax() {
+    if (!wp_verify_nonce($_POST['nonce'], 'bazaar_nonce')) {
+        wp_die('Security check failed');
+    }
+    
+    ob_start();
+    display_applications_from_api();
+    $output = ob_get_clean();
+    
+    wp_send_json_success($output);
 }
 
-function handle_application_submission($request) {
-    // Получаем JSON данные
-    $data = $request->get_json_params();
+// AJAX обработчик для модерации заявок
+add_action('wp_ajax_process_bazaar_application', 'handle_application_moderation');
+
+function handle_application_moderation() {
+    if (!wp_verify_nonce($_POST['nonce'], 'bazaar_nonce')) {
+        wp_send_json_error('Security check failed');
+    }
     
-    // Логируем полученные данные для отладки
-    error_log('Received application: ' . print_r($data, true));
+    $application_id = sanitize_text_field($_POST['application_id']);
+    $action_type = sanitize_text_field($_POST['action_type']); // 'approve' или 'reject'
+    $reason = sanitize_textarea_field($_POST['reason']);
     
-    // Валидация обязательных полей
-    $required_fields = ['title', 'category', 'price', 'description', 'region', 'city'];
-    foreach ($required_fields as $field) {
-        if (empty($data[$field])) {
-            error_log("Missing required field: $field");
-            return new WP_Error('missing_field', "Не заполнено поле: {$field}", ['status' => 400]);
+    // Получаем заявку из временного хранилища
+    $applications = get_option('bazaar_applications_cache', []);
+    $application = null;
+    
+    foreach ($applications as $app) {
+        if ($app['id'] == $application_id) {
+            $application = $app;
+            break;
         }
     }
     
-    // Создаем уникальный ID если не передан
-    $application_id = !empty($data['id']) ? sanitize_text_field($data['id']) : 'app_' . uniqid();
-    
-    // Сохраняем заявку в опции WordPress (временное хранилище)
-    $applications = get_option('bazaar_pending_applications', []);
-    
-    $new_application = [
-        'id' => $application_id,
-        'title' => sanitize_text_field($data['title']),
-        'category' => sanitize_text_field($data['category']),
-        'price' => sanitize_text_field($data['price']),
-        'description' => sanitize_textarea_field($data['description']),
-        'region' => sanitize_text_field($data['region']),
-        'city' => sanitize_text_field($data['city']),
-        'images' => !empty($data['images']) ? array_map('esc_url_raw', $data['images']) : [],
-        'status' => 'pending',
-        'created_at' => current_time('mysql'),
-        'source' => 'api'
-    ];
-    
-    // Добавляем новую заявку в начало массива
-    array_unshift($applications, $new_application);
-    
-    // Сохраняем (ограничим количество хранимых заявок до 50)
-    if (count($applications) > 50) {
-        $applications = array_slice($applications, 0, 50);
+    if (!$application) {
+        wp_send_json_error('Заявка не найдена');
     }
     
-    update_option('bazaar_pending_applications', $applications);
+    // Отправляем запрос на бэкенд
+    $result = send_moderation_action($application_id, $action_type, $reason, $application);
     
-    // Возвращаем успешный ответ
-    return [
-        'success' => true,
-        'application_id' => $application_id,
-        'message' => 'Заявка успешно принята',
-        'stored_count' => count($applications)
-    ];
+    if ($result['success']) {
+        wp_send_json_success('Заявка обработана');
+    } else {
+        wp_send_json_error($result['message']);
+    }
 }
 
-function display_applications_from_api() {
-    // Получаем заявки из опций WordPress
-    $applications = get_option('bazaar_pending_applications', []);
+// Функция отправки действия модерации на бэкенд
+function send_moderation_action($application_id, $action, $reason = '', $application_data = []) {
+    $url = BAZAAR_API_BASE_URL . "/ads/admin/{$application_id}/" . ($action === 'approve' ? 'approve' : 'reject');
     
-    // Если нет заявок
+    $args = [
+        'timeout' => BAZAAR_API_TIMEOUT,
+        'headers' => [
+            'Content-Type' => 'application/json',
+        ]
+    ];
+    
+    if ($action === 'reject' && !empty($reason)) {
+        $args['body'] = json_encode($reason); // Отправляем строку с комментарием
+        $args['headers']['Content-Type'] = 'application/json';
+    }
+    
+    $response = wp_remote_post($url, $args);
+    
+    if (is_wp_error($response)) {
+        return [
+            'success' => false,
+            'message' => 'Ошибка сети: ' . $response->get_error_message()
+        ];
+    }
+    
+    $status_code = wp_remote_retrieve_response_code($response);
+    
+    if ($status_code >= 200 && $status_code < 300) {
+        error_log("Successfully {$action}d application {$application_id}");
+        return ['success' => true];
+    } else {
+        $body = wp_remote_retrieve_body($response);
+        error_log("Failed to {$action} application {$application_id}. Status: {$status_code}, Response: {$body}");
+        return [
+            'success' => false,
+            'message' => "HTTP {$status_code}: " . $body
+        ];
+    }
+}
+
+// Функция получения заявок с бэкенда
+function get_applications_from_backend() {
+    $url = BAZAAR_API_BASE_URL . '/ads/admin/moderation';
+    
+    $response = wp_remote_get($url, [
+        'timeout' => BAZAAR_API_TIMEOUT,
+        'headers' => [
+            'Content-Type' => 'application/json',
+        ]
+    ]);
+    
+    if (is_wp_error($response)) {
+        error_log('Error fetching applications: ' . $response->get_error_message());
+        return [];
+    }
+    
+    $body = wp_remote_retrieve_body($response);
+    $applications = json_decode($body, true);
+    
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        error_log('JSON parse error: ' . json_last_error_msg());
+        return [];
+    }
+    
+    // Сохраняем в кэш с ID как ключ
+    $applications_with_ids = [];
+    foreach ($applications as $index => $app) {
+        $app['id'] = $app['id'] ?? 'app_' . ($index + 1); // Генерируем ID если нет
+        $applications_with_ids[$app['id']] = $app;
+    }
+    
+    update_option('bazaar_applications_cache', $applications_with_ids);
+    
+    return $applications_with_ids;
+}
+
+// Функция отображения заявок
+function display_applications_from_api() {
+    $applications = get_applications_from_backend();
+    
     if (empty($applications)) {
         echo '<div class="no-applications">';
-        echo '<h3>📭 Нет заявок</h3>';
-        echo '<p>Заявки появятся здесь после отправки через API</p>';
-        echo '<p><strong>Endpoint для тестирования:</strong><br>';
-        echo '<code>POST ' . get_rest_url() . 'bazaar/v1/application</code></p>';
+        echo '<h3>📭 Нет заявок на модерацию</h3>';
+        echo '<p>Заявки появятся здесь когда пользователи будут создавать объявления</p>';
+        echo '<p><strong>API Endpoint:</strong><br>';
+        echo '<code>GET ' . BAZAAR_API_BASE_URL . '/ads/admin/moderation</code></p>';
         echo '</div>';
         return;
     }
     
-    // Отображаем заявки
     echo '<div class="bazaar-applications">';
     
-    foreach ($applications as $application) {
-        // Экранируем все данные
+    foreach ($applications as $application_id => $application) {
         $title = esc_html($application['title'] ?? '');
-        $category = esc_html($application['category'] ?? '');
-        $price = esc_html($application['price'] ?? '');
+        $seller_name = esc_html($application['sellerName'] ?? 'Не указано');
         $description = wp_kses_post($application['description'] ?? '');
-        $region = esc_html($application['region'] ?? '');
-        $city = esc_html($application['city'] ?? '');
-        $images = $application['images'] ?? [];
-        $application_id = esc_html($application['id'] ?? '');
-        $created_at = esc_html($application['created_at'] ?? '');
-        $source = esc_html($application['source'] ?? 'api');
+        $price = esc_html($application['price'] ?? '0');
+        $condition = esc_html($application['condition'] ?? 'Не указано');
+        $phone = esc_html($application['phone'] ?? 'Не указано');
+        $photos = $application['photos'] ?? [];
+        $equipment_item_id = esc_html($application['equipmentItemId'] ?? '');
+        $attributes = $application['attributes'] ?? [];
         ?>
         
         <div class="application-card" data-application-id="<?php echo $application_id; ?>">
@@ -328,21 +617,22 @@ function display_applications_from_api() {
                 <div>
                     <h2 class="application-title"><?php echo $title; ?></h2>
                     <div class="application-meta">
-                        <span class="application-id">ID: <?php echo $application_id; ?></span>
-                        <span class="application-source">Источник: <?php echo $source; ?></span>
-                        <?php if ($created_at): ?>
-                        <span class="application-date">Получено: <?php echo date('d.m.Y H:i', strtotime($created_at)); ?></span>
+                        <span class="seller-name">👤 <?php echo $seller_name; ?></span>
+                        <span class="application-phone">📞 <?php echo $phone; ?></span>
+                        <span class="application-condition">Состояние: <?php echo $condition; ?></span>
+                        <?php if ($equipment_item_id): ?>
+                        <span>Категория ID: <?php echo $equipment_item_id; ?></span>
                         <?php endif; ?>
                     </div>
                 </div>
-                <div class="application-price"><?php echo $price; ?></div>
+                <div class="application-price"><?php echo number_format($price, 0, ',', ' '); ?> ₽</div>
             </div>
             
             <!-- Галерея изображений -->
-            <?php if (!empty($images) && is_array($images)): ?>
+            <?php if (!empty($photos) && is_array($photos)): ?>
             <div class="application-images">
-                <?php foreach ($images as $index => $image_url): 
-                    $clean_url = esc_url($image_url);
+                <?php foreach ($photos as $index => $photo_url): 
+                    $clean_url = esc_url($photo_url);
                 ?>
                     <div class="image-wrapper">
                         <img src="<?php echo $clean_url; ?>" 
@@ -362,37 +652,57 @@ function display_applications_from_api() {
             <!-- Детали заявки -->
             <div class="application-details">
                 <div class="application-detail">
-                    <strong>Категория:</strong>
-                    <?php echo $category; ?>
+                    <strong>Основная информация:</strong>
+                    <div>Продавец: <?php echo $seller_name; ?></div>
+                    <div>Телефон: <?php echo $phone; ?></div>
+                    <div>Состояние: <?php echo $condition; ?></div>
+                    <div>Категория ID: <?php echo $equipment_item_id; ?></div>
                 </div>
+                
                 <div class="application-detail">
-                    <strong>Местоположение:</strong>
-                    <?php echo $region . ', ' . $city; ?>
-                </div>
-                <div class="application-detail">
-                    <strong>Кол-во фото:</strong>
-                    <?php echo count($images); ?> шт.
-                </div>
-                <div class="application-detail">
-                    <strong>Статус:</strong>
-                    <span class="status-pending">⏳ На модерации</span>
+                    <strong>Атрибуты товара:</strong>
+                    <div class="attributes-list">
+                        <?php foreach ($attributes as $attr): ?>
+                            <div class="attribute-item">
+                                Атрибут <?php echo esc_html($attr['attributeId'] ?? ''); ?>: 
+                                <?php 
+                                if (is_array($attr['value'] ?? null)) {
+                                    echo 'min: ' . esc_html($attr['value']['min'] ?? '') . ', max: ' . esc_html($attr['value']['max'] ?? '');
+                                } else {
+                                    echo esc_html($attr['value'] ?? '');
+                                }
+                                ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
             </div>
             
             <!-- Описание -->
             <?php if (!empty($description)): ?>
             <div class="application-description">
-                <strong>Описание:</strong><br>
+                <strong>Описание товара:</strong><br>
                 <?php echo wpautop($description); ?>
             </div>
             <?php endif; ?>
             
             <!-- Кнопки действий -->
             <div class="application-actions">
-                <button type="button" class="button button-primary approve-btn" disabled>✅ Одобрить</button>
-                <button type="button" class="button button-secondary reject-btn" disabled>❌ Отклонить</button>
+                <button type="button" class="button button-primary approve-btn">✅ Одобрить</button>
+                <button type="button" class="button button-secondary reject-btn">❌ Отклонить</button>
+                
+                <!-- Поле для причины отказа -->
+                <div class="rejection-reason">
+                    <strong>Причина отказа:</strong>
+                    <textarea class="rejection-reason-text" placeholder="Укажите причину отказа..."></textarea>
+                    <div class="action-buttons">
+                        <button type="button" class="button button-secondary cancel-reject">Отмена</button>
+                        <button type="button" class="button button-primary confirm-reject">Подтвердить отклонение</button>
+                    </div>
+                </div>
+                
                 <span style="margin-left: auto; color: #666; font-size: 13px;">
-                    ✅ Получено через API
+                    <span class="status-pending">⏳ На модерации</span>
                 </span>
             </div>
         </div>
