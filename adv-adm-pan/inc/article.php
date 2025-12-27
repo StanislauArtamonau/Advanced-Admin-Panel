@@ -548,7 +548,7 @@ function render_edit_article_page() {
                         <div id="edit-blocks-container">
                             <?php if (!empty($article_data['blocks'])): ?>
                                 <?php foreach ($article_data['blocks'] as $index => $block): ?>
-                                    <div class="block-repeater" data-block-index="<?php echo $index + 1; ?>">
+                                    <div class="block-repeater edit-block-repeater" data-block-index="<?php echo $index + 1; ?>">
                                         <div class="block-header">
                                             <span class="block-title">Блок #<?php echo $index + 1; ?>*</span>
                                             <button type="button" class="remove-edit-block button button-small">Удалить блок</button>
@@ -564,12 +564,15 @@ function render_edit_article_page() {
                                         <div class="form-group">
                                             <label>Текст блока:</label>
                                             <?php 
-                                            wp_editor($block['content'], 'edit_block_' . ($index + 1), [
+                                            // ФИКС: Используем статичный ID для редактора
+                                            $editor_id = 'edit_block_' . ($index + 1);
+                                            wp_editor($block['content'], $editor_id, [
                                                 'textarea_name' => 'blocks[' . ($index + 1) . '][content]',
                                                 'textarea_rows' => 10,
                                                 'media_buttons' => true,
                                                 'teeny' => false,
-                                                'quicktags' => true
+                                                'quicktags' => true,
+                                                'editor_class' => 'article-block-editor edit-block-editor'
                                             ]);
                                             ?>
                                         </div>
@@ -611,6 +614,52 @@ function render_edit_article_page() {
                     <input type="hidden" name="slug" value="<?php echo esc_attr($slug); ?>">
                     <?php wp_nonce_field('delete_article_action'); ?>
                 </form>
+                
+                <style>
+                /* Стили должны быть такие же, как в форме создания */
+                .edit-block-repeater {
+                    background: #f9f9f9;
+                    border: 1px solid #ddd;
+                    border-radius: 6px;
+                    padding: 20px;
+                    margin-bottom: 20px;
+                }
+                
+                .edit-block-repeater .block-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 15px;
+                    padding-bottom: 10px;
+                    border-bottom: 1px solid #e0e0e0;
+                }
+                
+                .edit-block-repeater .block-title {
+                    font-weight: 600;
+                    font-size: 16px;
+                }
+                
+                .edit-block-repeater .form-group {
+                    margin-bottom: 20px;
+                }
+                
+                .edit-block-repeater .form-group label {
+                    display: block;
+                    margin-bottom: 5px;
+                    font-weight: 600;
+                    color: #23282d;
+                }
+                
+                .edit-block-repeater input[type="text"],
+                .edit-block-repeater input[type="url"],
+                .edit-block-repeater textarea {
+                    width: 100%;
+                    padding: 8px 12px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    box-sizing: border-box;
+                }
+                </style>
                 
                 <script>
                 jQuery(document).ready(function($) {
@@ -659,8 +708,8 @@ function render_edit_article_page() {
                     
                     // Удаление блока
                     $(document).on('click', '.remove-edit-block', function() {
-                        if ($('.block-repeater').length > 1) {
-                            $(this).closest('.block-repeater').remove();
+                        if ($('.edit-block-repeater').length > 1) {
+                            $(this).closest('.edit-block-repeater').remove();
                             updateEditBlockNumbers();
                         }
                     });
@@ -674,9 +723,9 @@ function render_edit_article_page() {
                     });
                     
                     function addEditBlock(index) {
-                        const blockId = 'edit_block_' + Date.now() + '_' + index;
+                        const blockId = 'edit_new_block_' + index;
                         const blockHtml = `
-                            <div class="block-repeater" data-block-index="${index}">
+                            <div class="block-repeater edit-block-repeater" data-block-index="${index}">
                                 <div class="block-header">
                                     <span class="block-title">Блок #${index}*</span>
                                     <button type="button" class="remove-edit-block button button-small">Удалить блок</button>
@@ -704,8 +753,12 @@ function render_edit_article_page() {
                         `;
                         $('#edit-blocks-container').append(blockHtml);
                         
+                        // ФИКС: Инициализируем редактор для нового блока
                         setTimeout(function() {
                             if (typeof tinymce !== 'undefined') {
+                                // Сначала удаляем предыдущий редактор с таким ID, если есть
+                                tinymce.remove('#' + blockId);
+                                
                                 tinymce.init({
                                     selector: '#' + blockId,
                                     height: 300,
@@ -731,7 +784,7 @@ function render_edit_article_page() {
                     });
                     
                     function updateEditBlockNumbers() {
-                        $('#edit-blocks-container .block-repeater').each(function(index) {
+                        $('#edit-blocks-container .edit-block-repeater').each(function(index) {
                             const newIndex = index + 1;
                             $(this).attr('data-block-index', newIndex);
                             $(this).find('.block-title').text('Блок #' + newIndex + '*');
@@ -744,7 +797,7 @@ function render_edit_article_page() {
                                 }
                             });
                         });
-                        editBlockCount = $('#edit-blocks-container .block-repeater').length;
+                        editBlockCount = $('#edit-blocks-container .edit-block-repeater').length;
                     }
                     
                     // Валидация формы редактирования
