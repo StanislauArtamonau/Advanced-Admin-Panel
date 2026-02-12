@@ -1,13 +1,11 @@
 <?php
-// Конфигурация API
-define('BAZAAR_API_BASE_URL', 'http://localhost:3001/v1/api/marketplace/ads/admin/moderation'); // Замени на реальный URL
+define('BAZAAR_API_BASE_URL', 'http://host.docker.internal:3001/v1/api/admin/marketplace/ads');
 define('BAZAAR_API_TIMEOUT', 30);
 
-// Добавляем страницу в админке
 add_action('admin_menu', function() {
     add_menu_page(
         'Модерация барахолки',
-        '🛒 Модерация',
+        'Барахолка',
         'manage_options',
         'bazaar-moderation',
         'render_bazaar_moderation_page',
@@ -15,6 +13,61 @@ add_action('admin_menu', function() {
         25
     );
 });
+
+function create_api_signature($method, $path, $timestamp, $body = '') {
+    $creds = get_bazaar_api_credentials();
+    
+    if (!$creds || empty($creds->api_secret)) {
+        error_log('Bazaar API: No credentials found');
+        return '';
+    }
+    
+    $payload = $method . "\n" . $path . "\n" . $timestamp . "\n" . $body;
+    return hash_hmac('sha256', $payload, $creds->api_secret);
+}
+
+// Функция для подписанного API запроса
+function make_signed_api_request($method, $path, $body = null) {
+    $creds = get_bazaar_api_credentials();
+    
+    if (!$creds) {
+        error_log('Bazaar API: No credentials configured');
+        return new WP_Error('no_credentials', 'API credentials not configured');
+    }
+    
+    $timestamp = time();
+    $body_string = '';
+    
+    if ($body && is_array($body)) {
+        $body_string = json_encode($body);
+    } elseif ($body && is_string($body)) {
+        $body_string = $body;
+    }
+    
+    // Создаем подпись
+    $signature = create_api_signature($method, $path, $timestamp, $body_string);
+    
+    $url = $creds->api_url . $path;
+    
+    $args = [
+        'timeout' => 30,
+        'method' => $method,
+        'headers' => [
+            'X-Api-Key' => $creds->api_key,
+            'X-Timestamp' => $timestamp,
+            'X-Signature' => $signature,
+            'Content-Type' => 'application/json',
+        ]
+    ];
+    
+    if ($body_string) {
+        $args['body'] = $body_string;
+    }
+    
+    error_log("Making signed API request to: {$url}");
+    
+    return wp_remote_request($url, $args);
+}
 
 function render_bazaar_moderation_page() {
     wp_enqueue_script('bazaar-admin', get_template_directory_uri() . '/js/bazaar-admin.js', ['jquery'], '1.0', true);
@@ -30,7 +83,7 @@ function render_bazaar_moderation_page() {
         <div class="bazaar-header">
             <div class="notice notice-info">
                 <p>Заявки загружаются с бэкенда. Для обновления списка обновите страницу.</p>
-                <p><strong>API Endpoint:</strong> <code>GET <?php echo BAZAAR_API_BASE_URL; ?>/ads/admin/moderation</code></p>
+                <p><strong>API Endpoint:</strong> <code>GET <?php echo BAZAAR_API_BASE_URL; ?></code></p>
             </div>
             
             <div class="bazaar-controls">
@@ -46,6 +99,7 @@ function render_bazaar_moderation_page() {
         </div>
     </div>
     
+    <!-- [CSS стили остаются без изменений] -->
     <style>
     .bazaar-header {
         margin-bottom: 20px;
@@ -329,6 +383,15 @@ function render_bazaar_moderation_page() {
         border-radius: 6px;
         margin: 15px 0;
     }
+
+    .application-status {
+    padding: 10px 15px;
+    background: #fff8e1;
+    border: 1px solid #ffd54f;
+    border-radius: 6px;
+    margin: 15px 0;
+    font-weight: 500;
+}
     </style>
     
     <script>
@@ -509,21 +572,18 @@ function handle_application_moderation() {
 
 // Функция отправки действия модерации на бэкенд
 function send_moderation_action($application_id, $action, $reason = '', $application_data = []) {
-    $url = BAZAAR_API_BASE_URL . "/ads/admin/{$application_id}/" . ($action === 'approve' ? 'approve' : 'reject');
+    $path = "/{$application_id}/" . ($action === 'approve' ? 'approve' : 'reject');
     
-    $args = [
-        'timeout' => BAZAAR_API_TIMEOUT,
-        'headers' => [
-            'Content-Type' => 'application/json',
-        ]
-    ];
+    error_log("Sending {$action} to path: " . $path);
+    error_log("Reason: " . $reason);
     
+    $body = null;
     if ($action === 'reject' && !empty($reason)) {
-        $args['body'] = json_encode($reason); // Отправляем строку с комментарием
-        $args['headers']['Content-Type'] = 'application/json';
+        $body = ['comment' => $reason];
+        error_log("Rejection body: " . print_r($body, true));
     }
     
-    $response = wp_remote_post($url, $args);
+    $response = make_signed_api_request('POST', $path, $body);
     
     if (is_wp_error($response)) {
         return [
@@ -549,14 +609,8 @@ function send_moderation_action($application_id, $action, $reason = '', $applica
 
 // Функция получения заявок с бэкенда
 function get_applications_from_backend() {
-    $url = BAZAAR_API_BASE_URL . '/ads/admin/moderation';
-    
-    $response = wp_remote_get($url, [
-        'timeout' => BAZAAR_API_TIMEOUT,
-        'headers' => [
-            'Content-Type' => 'application/json',
-        ]
-    ]);
+    $path = '?status=UNDER_MODERATION';
+    $response = make_signed_api_request('GET', $path);
     
     if (is_wp_error($response)) {
         error_log('Error fetching applications: ' . $response->get_error_message());
@@ -564,18 +618,21 @@ function get_applications_from_backend() {
     }
     
     $body = wp_remote_retrieve_body($response);
-    $applications = json_decode($body, true);
+    $data = json_decode($body, true);
     
     if (json_last_error() !== JSON_ERROR_NONE) {
         error_log('JSON parse error: ' . json_last_error_msg());
         return [];
     }
     
+    // Получаем массив заявок из data
+    $applications = $data['data'] ?? [];
+    
     // Сохраняем в кэш с ID как ключ
     $applications_with_ids = [];
-    foreach ($applications as $index => $app) {
-        $app['id'] = $app['id'] ?? 'app_' . ($index + 1); // Генерируем ID если нет
-        $applications_with_ids[$app['id']] = $app;
+    foreach ($applications as $app) {
+        $app_id = $app['id'] ?? 'app_' . uniqid();
+        $applications_with_ids[$app_id] = $app;
     }
     
     update_option('bazaar_applications_cache', $applications_with_ids);
@@ -591,8 +648,6 @@ function display_applications_from_api() {
         echo '<div class="no-applications">';
         echo '<h3>📭 Нет заявок на модерацию</h3>';
         echo '<p>Заявки появятся здесь когда пользователи будут создавать объявления</p>';
-        echo '<p><strong>API Endpoint:</strong><br>';
-        echo '<code>GET ' . BAZAAR_API_BASE_URL . '/ads/admin/moderation</code></p>';
         echo '</div>';
         return;
     }
@@ -605,9 +660,11 @@ function display_applications_from_api() {
         $description = wp_kses_post($application['description'] ?? '');
         $price = esc_html($application['price'] ?? '0');
         $condition = esc_html($application['condition'] ?? 'Не указано');
-        $phone = esc_html($application['phone'] ?? 'Не указано');
+        $phone = esc_html($application['phones'] ?? 'Не указано');
         $photos = $application['photos'] ?? [];
-        $equipment_item_id = esc_html($application['equipmentItemId'] ?? '');
+        $equipment_item_name = esc_html($application['equipmentItemName'] ?? '');
+        $status = esc_html($application['status'] ?? '');
+        $created_at = esc_html($application['createdAt'] ?? '');
         $attributes = $application['attributes'] ?? [];
         ?>
         
@@ -620,12 +677,20 @@ function display_applications_from_api() {
                         <span class="seller-name">👤 <?php echo $seller_name; ?></span>
                         <span class="application-phone">📞 <?php echo $phone; ?></span>
                         <span class="application-condition">Состояние: <?php echo $condition; ?></span>
-                        <?php if ($equipment_item_id): ?>
-                        <span>Категория ID: <?php echo $equipment_item_id; ?></span>
+                        <?php if ($equipment_item_name): ?>
+                        <span>Категория: <?php echo $equipment_item_name; ?></span>
+                        <?php endif; ?>
+                        <?php if ($created_at): ?>
+                        <span class="application-date">Создано: <?php echo date('d.m.Y H:i', strtotime($created_at)); ?></span>
                         <?php endif; ?>
                     </div>
                 </div>
-                <div class="application-price"><?php echo number_format($price, 0, ',', ' '); ?> ₽</div>
+                <div class="application-price"><?php echo number_format($price, 0, ',', ' '); ?> руб</div>
+            </div>
+            
+            <!-- Статус -->
+            <div class="application-status">
+                <strong>Статус:</strong> <?php echo $status; ?>
             </div>
             
             <!-- Галерея изображений -->
@@ -639,7 +704,7 @@ function display_applications_from_api() {
                              alt="<?php echo $title . ' - фото ' . ($index + 1); ?>" 
                              class="application-image"
                              loading="lazy"
-                             onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgwIiBoZWlnaHQ9IjE4MCIgdmlld0JveD0iMCAwIDE4MCAxODAiIHN0eWxlPSJiYWNrZ3JvdW5kOiAjZjBmMGYwOyBib3JkZXItcmFkaXVzOiA4cHg7Ij48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE0IiBmaWxsPSIjNjY2Ij7Qp9C40YLQsNC90LggPDwvdGV4dD48dGV4dCB4PSI1MCUiIHk9IjYwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjEyIiBmaWxsPSIjOTk5Ij7QvdCw0LfQsNC0PC90ZXh0Pjwvc3ZnPg=='">
+                             onerror="this.style.display='none'">
                     </div>
                 <?php endforeach; ?>
             </div>
@@ -649,34 +714,46 @@ function display_applications_from_api() {
             </div>
             <?php endif; ?>
             
-            <!-- Детали заявки -->
+            <!-- Атрибуты товара -->
+            <?php if (!empty($attributes) && is_array($attributes)): ?>
             <div class="application-details">
                 <div class="application-detail">
-                    <strong>Основная информация:</strong>
-                    <div>Продавец: <?php echo $seller_name; ?></div>
-                    <div>Телефон: <?php echo $phone; ?></div>
-                    <div>Состояние: <?php echo $condition; ?></div>
-                    <div>Категория ID: <?php echo $equipment_item_id; ?></div>
+                    <strong>Характеристики:</strong>
+                    <div class="attributes-list">
+                        <?php foreach ($attributes as $attr): 
+                            $attr_name = esc_html($attr['attributeName'] ?? '');
+                            $value_type = $attr['valueType'] ?? '';
+                            $unit = esc_html($attr['unit'] ?? '');
+                            $value = '';
+                            
+                            if ($value_type === 'range') {
+                                $min = $attr['valueNumberMin'] ?? '';
+                                $max = $attr['valueNumberMax'] ?? '';
+                                $value = "от {$min} до {$max}";
+                            } elseif ($value_type === 'enum' || $value_type === 'string') {
+                                $value = $attr['value'] ?? '';
+                            }
+                            
+                            if (!empty($value)): ?>
+                            <div class="attribute-item">
+                                <strong><?php echo $attr_name; ?>:</strong> 
+                                <?php echo $value; ?>
+                                <?php if (!empty($unit)) echo ' ' . $unit; ?>
+                            </div>
+                            <?php endif;
+                        endforeach; ?>
+                    </div>
                 </div>
                 
                 <div class="application-detail">
-                    <strong>Атрибуты товара:</strong>
-                    <div class="attributes-list">
-                        <?php foreach ($attributes as $attr): ?>
-                            <div class="attribute-item">
-                                Атрибут <?php echo esc_html($attr['attributeId'] ?? ''); ?>: 
-                                <?php 
-                                if (is_array($attr['value'] ?? null)) {
-                                    echo 'min: ' . esc_html($attr['value']['min'] ?? '') . ', max: ' . esc_html($attr['value']['max'] ?? '');
-                                } else {
-                                    echo esc_html($attr['value'] ?? '');
-                                }
-                                ?>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
+                    <strong>Контактная информация:</strong>
+                    <div>Продавец: <?php echo $seller_name; ?></div>
+                    <div>Телефон: <?php echo $phone; ?></div>
+                    <div>Состояние: <?php echo $condition; ?></div>
+                    <div>Категория: <?php echo $equipment_item_name; ?></div>
                 </div>
             </div>
+            <?php endif; ?>
             
             <!-- Описание -->
             <?php if (!empty($description)): ?>
@@ -712,4 +789,173 @@ function display_applications_from_api() {
     
     echo '</div>';
 }
-?>
+
+// Добавляем в functions.php или в отдельный файл установки
+function create_bazaar_api_table() {
+    global $wpdb;
+    
+    $table_name = $wpdb->prefix . 'bazaar_api_keys';
+    
+    $charset_collate = $wpdb->get_charset_collate();
+    
+    $sql = "CREATE TABLE $table_name (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        api_key varchar(255) NOT NULL,
+        api_secret text NOT NULL,
+        api_url varchar(500) NOT NULL,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+    ) $charset_collate;";
+    
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
+}
+register_activation_hook(__FILE__, 'create_bazaar_api_table');
+
+// Добавляем подменю для настроек
+add_action('admin_menu', function() {
+    add_submenu_page(
+        'bazaar-moderation',
+        'Настройки API',
+        'Настройки API',
+        'manage_options',
+        'bazaar-settings',
+        'render_bazaar_settings_page'
+    );
+});
+
+function render_bazaar_settings_page() {
+    // Сохраняем настройки если форма отправлена
+    if (isset($_POST['save_bazaar_settings'])) {
+        check_admin_referer('bazaar_settings_nonce');
+        
+        $api_key = sanitize_text_field($_POST['api_key']);
+        $api_secret = $_POST['api_secret']; // Не фильтруем - будет зашифрован
+        $api_url = esc_url_raw($_POST['api_url']);
+        
+        save_bazaar_api_credentials($api_key, $api_secret, $api_url);
+        
+        echo '<div class="notice notice-success"><p>Настройки сохранены!</p></div>';
+    }
+    
+    $creds = get_bazaar_api_credentials();
+    ?>
+    <div class="wrap">
+        <h1>⚙️ Настройки API Барахолки</h1>
+        
+        <form method="post">
+            <?php wp_nonce_field('bazaar_settings_nonce'); ?>
+            
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><label for="api_key">API Key</label></th>
+                    <td>
+                        <input type="text" name="api_key" id="api_key" 
+                               value="<?php echo esc_attr($creds->api_key ?? ''); ?>" 
+                               class="regular-text" required>
+                    </td>
+                </tr>
+                
+                <tr>
+                    <th scope="row"><label for="api_secret">API Secret</label></th>
+                    <td>
+                        <input type="password" name="api_secret" id="api_secret" 
+                               value="" class="regular-text" 
+                               placeholder="<?php echo $creds ? '●●●●●●●●' : ''; ?>">
+                        <p class="description">Оставьте пустым чтобы не менять текущий секрет</p>
+                    </td>
+                </tr>
+                
+                <tr>
+                    <th scope="row"><label for="api_url">API URL</label></th>
+                    <td>
+                        <input type="url" name="api_url" id="api_url" 
+                               value="<?php echo esc_attr($creds->api_url ?? 'http://host.docker.internal:3001/v1/api/admin/marketplace/ads'); ?>" 
+                               class="regular-text" required>
+                    </td>
+                </tr>
+            </table>
+            
+            <?php submit_button('Сохранить настройки', 'primary', 'save_bazaar_settings'); ?>
+        </form>
+    </div>
+    <?php
+}
+
+// Сохранение ключей с шифрованием
+function save_bazaar_api_credentials($api_key, $api_secret, $api_url) {
+    global $wpdb;
+    
+    $table_name = $wpdb->prefix . 'bazaar_api_keys';
+    
+    // Шифруем секрет
+    $encrypted_secret = encrypt_bazaar_secret($api_secret);
+    
+    // Проверяем есть ли уже записи
+    $existing = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+    
+    if ($existing > 0) {
+        // Обновляем существующую запись
+        $wpdb->update(
+            $table_name,
+            [
+                'api_key' => $api_key,
+                'api_secret' => $encrypted_secret,
+                'api_url' => $api_url
+            ],
+            ['id' => 1]
+        );
+    } else {
+        // Создаем новую запись
+        $wpdb->insert(
+            $table_name,
+            [
+                'api_key' => $api_key,
+                'api_secret' => $encrypted_secret,
+                'api_url' => $api_url
+            ]
+        );
+    }
+}
+
+// Получение ключей с расшифровкой
+function get_bazaar_api_credentials() {
+    global $wpdb;
+    
+    $table_name = $wpdb->prefix . 'bazaar_api_keys';
+    $creds = $wpdb->get_row("SELECT * FROM $table_name ORDER BY id DESC LIMIT 1");
+    
+    if ($creds) {
+        $creds->api_secret = decrypt_bazaar_secret($creds->api_secret);
+        return $creds;
+    }
+    
+    return null;
+}
+
+// Шифрование секрета
+function encrypt_bazaar_secret($secret) {
+    if (empty($secret)) {
+        return '';
+    }
+    
+    $key = wp_salt('auth');
+    $iv = substr(wp_salt('logged_in'), 0, 16);
+    
+    $encrypted = openssl_encrypt($secret, 'AES-256-CBC', $key, 0, $iv);
+    return base64_encode($encrypted);
+}
+
+// Расшифровка секрета
+function decrypt_bazaar_secret($encrypted_secret) {
+    if (empty($encrypted_secret)) {
+        return '';
+    }
+    
+    $key = wp_salt('auth');
+    $iv = substr(wp_salt('logged_in'), 0, 16);
+    
+    $decrypted = openssl_decrypt(base64_decode($encrypted_secret), 'AES-256-CBC', $key, 0, $iv);
+    return $decrypted ?: '';
+}
+
